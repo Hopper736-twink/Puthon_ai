@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Python IDE Lite</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <style>
+        :root { --bg: #1e1e1e; --header: #2d2d2d; --accent: #007acc; --text: #d4d4d4; --console-bg: #000; }
+        body, html { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Consolas', monospace; overflow: hidden; }
+        
+        .toolbar { height: 40px; background: var(--header); display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid #3c3c3c; }
+        .status { font-size: 11px; color: #888; letter-spacing: 0.5px; }
+        .run-btn { background: #388e3c; color: white; border: none; padding: 4px 12px; border-radius: 3px; font-size: 12px; cursor: pointer; transition: 0.2s; }
+        .run-btn:hover { background: #45a049; }
+
+        #editor-container { height: calc(65% - 40px); border-bottom: 2px solid #333; }
+        #editor { width: 100%; height: 100%; background: var(--bg); color: #9cdcfe; border: none; padding: 15px; font-size: 15px; outline: none; resize: none; box-sizing: border-box; line-height: 1.5; }
+
+        #console { height: 35%; background: var(--console-bg); color: #4af626; padding: 12px; font-size: 13px; overflow-y: auto; white-space: pre-wrap; box-sizing: border-box; font-family: 'Courier New', monospace; }
+        .err { color: #f44747; }
+
+        /* Окно ИИ */
+        #ai-modal { 
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 85%; max-width: 500px; background: #252526; border: 1px solid var(--accent); 
+            border-radius: 6px; padding: 20px; z-index: 10000; box-shadow: 0 20px 50px rgba(0,0,0,0.7); 
+        }
+        #ai-prompt { width: 100%; background: #3c3c3c; border: 1px solid #555; color: #fff; padding: 12px; border-radius: 4px; outline: none; box-sizing: border-box; font-size: 14px; margin-top: 10px; }
+        .ai-submit { background: var(--accent); color: white; border: none; padding: 12px; width: 100%; margin-top: 15px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        
+        #secret-zone { position: fixed; top: 0; left: 0; width: 40px; height: 40px; z-index: 9999; }
+    </style>
+</head>
+<body>
+
+<div id="secret-zone"></div>
+
+<div class="toolbar">
+    <div class="status" id="status">INITIALIZING...</div>
+    <button class="run-btn" onclick="runCode()">RUN (Ctrl+Enter)</button>
+</div>
+
+<div id="editor-container">
+    <textarea id="editor" spellcheck="false" placeholder="Пиши код здесь..."># Пример с вводом данных
+name = input("Как тебя зовут? ")
+print(f"Привет, {name}!")</textarea>
+</div>
+
+<div id="console">Загрузка Python...</div>
+
+<div id="ai-modal">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:var(--accent); font-size:14px; font-weight:bold;">AI ASSISTANT</span>
+        <span onclick="closeAI()" style="cursor:pointer; color:#888;">✕</span>
+    </div>
+    <textarea id="ai-prompt" rows="4" placeholder="Напиши задачу (н-р: 'сделай сортировку списка') или опиши ошибку"></textarea>
+    <button class="ai-submit" onclick="askAI()">ПРИМЕНИТЬ ПРАВКИ</button>
+</div>
+
+<script>
+    let pyodide;
+    let secretCounter = 0;
+
+    async function init() {
+        pyodide = await loadPyodide();
+        document.getElementById('status').innerText = "● PYTHON 3.10 READY";
+        document.getElementById('console').innerText = "Консоль готова. Используй Ctrl+Q для помощи ИИ.";
+    }
+    init();
+
+    async function runCode() {
+        const code = document.getElementById('editor').value;
+        const out = document.getElementById('console');
+        out.innerText = "";
+        
+        try {
+            // Перехват stdout и реализация input()
+            pyodide.runPython(`
+                import sys
+                import io
+                from js import window
+                
+                sys.stdout = io.StringIO()
+                
+                def custom_input(prompt=""):
+                    return window.prompt(prompt)
+                
+                __builtins__.input = custom_input
+            `);
+            
+            await pyodide.runPythonAsync(code);
+            const stdout = pyodide.runPython("sys.stdout.getvalue()");
+            out.innerText += stdout || "\n[Программа завершена]";
+        } catch (err) {
+            out.innerHTML = `<span class="err">Ошибка:\n${err}</span>`;
+        }
+    }
+
+    // Горячие клавиши
+    document.addEventListener('keydown', (e) => {
+        // Ctrl + Q для ИИ
+        if (e.ctrlKey && (e.key === 'q' || e.key === 'й')) {
+            e.preventDefault();
+            toggleAI();
+        }
+        // Ctrl + Enter для запуска
+        if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            runCode();
+        }
+    });
+
+    // Секретная зона (3 клика в угол)
+    document.getElementById('secret-zone').addEventListener('click', () => {
+        secretCounter++;
+        if (secretCounter >= 3) { toggleAI(); secretCounter = 0; }
+        setTimeout(() => secretCounter = 0, 1000);
+    });
+
+    function toggleAI() {
+        const modal = document.getElementById('ai-modal');
+        const isVisible = modal.style.display === 'block';
+        modal.style.display = isVisible ? 'none' : 'block';
+        if (!isVisible) document.getElementById('ai-prompt').focus();
+    }
+
+    function closeAI() { document.getElementById('ai-modal').style.display = 'none'; }
+
+    async function askAI() {
+        const prompt = document.getElementById('ai-prompt').value;
+        const currentCode = document.getElementById('editor').value;
+        const out = document.getElementById('console');
+        
+        // --- ВСТАВЬ СВОЙ КЛЮЧ НИЖЕ ---
+        const apiKey = "sk-or-v1-c0a1d8cf9fd8e504da23fe0da1a23fe2fcb07af72141466a8d00c74dfde28042sk-or-v1-c0a1d8cf9fd8e504da23fe0da1a23fe2fcb07af72141466a8d00c74dfde28042"; 
+        
+        if (!apiKey || apiKey.includes("ТВОЙ")) {
+            alert("Ошибка: Не добавлен API Key в коде!");
+            return;
+        }
+
+        closeAI();
+        out.innerText = "ИИ анализирует и правит код...";
+
+        try {
+            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    "model": "google/gemini-2.0-flash-exp:free",
+                    "messages": [
+                        {"role": "system", "content": "Ты - Python эксперт. Исправь код или напиши новый по запросу. Верни ТОЛЬКО готовый код без пояснений, комментариев и символов ```."},
+                        {"role": "user", "content": `Код сейчас:\n${currentCode}\n\nЗадача: ${prompt}`}
+                    ]
+                })
+            });
+
+            const data = await response.json();
+            const newCode = data.choices[0].message.content;
+            document.getElementById('editor').value = newCode.trim();
+            out.innerText = "Код успешно обновлен нейросетью.";
+        } catch (e) {
+            out.innerText = "Ошибка ИИ: " + e;
+        }
+    }
+</script>
+</body>
+</html>
